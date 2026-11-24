@@ -1,0 +1,67 @@
+name: Atualizar Ranking SUAP
+
+on:
+  workflow_dispatch:
+    inputs:
+      somente_dashboard:
+        description: "Pular coleta do SUAP e apenas regenerar o index.html"
+        required: false
+        type: boolean
+        default: false
+  # Descomente abaixo para rodar automaticamente em horários agendados (horário em UTC):
+  # schedule:
+  #   - cron: "0 22 * * 1-5" # Seg-Sex às 18h (UTC-4) / 19h (Brasília)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: atualizar-ranking
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Coletar notas do SUAP
+        if: ${{ !inputs.somente_dashboard }}
+        env:
+          SUAP_BASE_URL: ${{ secrets.SUAP_BASE_URL }}
+          SUAP_LOGIN_URL: ${{ secrets.SUAP_LOGIN_URL }}
+          SUAP_USUARIO: ${{ secrets.SUAP_USUARIO }}
+          SUAP_SENHA: ${{ secrets.SUAP_SENHA }}
+          SUAP_CHAVE_CRIPTO: ${{ secrets.SUAP_CHAVE_CRIPTO }}
+        run: python suap_minhas_notas.py
+
+      - name: Gerar dashboard criptografado
+        env:
+          SUAP_CHAVE_CRIPTO: ${{ secrets.SUAP_CHAVE_CRIPTO }}
+          SUAP_SENHA_RANKING: ${{ secrets.SUAP_SENHA_RANKING }}
+        run: python gerar_dashboard.py --no-open
+
+      - name: Commit e push das alterações
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add notas index.html
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração para commitar."
+            exit 0
+          fi
+          git commit -m "chore: atualiza notas e ranking via GitHub Actions"
+          git push origin main

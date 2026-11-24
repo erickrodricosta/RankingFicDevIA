@@ -223,7 +223,8 @@ def main() -> None:
     total_registros = sum(len(a["disciplinas"]) for a in alunos)
     print(f"Dashboard atualizado com {len(alunos)} aluno(s) e {total_registros} registros de disciplinas.")
     print(f"Arquivo: {html_path}")
-    webbrowser.open(html_path.as_uri())
+    if not os.environ.get("CI") and "--no-open" not in sys.argv:
+        webbrowser.open(html_path.as_uri())
 
 
 if __name__ == "__main__":
