@@ -743,6 +743,23 @@
         return num.toFixed(1).replace('.', ',') + '%';
       }
 
+      const HORAS_POR_AULA = 3;
+
+      function normalizeCount(num) {
+        if (num === null || num === undefined || !Number.isFinite(num)) return 0;
+        const rounded = Math.round(num * 100) / 100;
+        if (Math.abs(rounded - Math.round(rounded)) < 1e-9) {
+          const intVal = Math.round(rounded);
+          return intVal === 0 ? 0 : intVal;
+        }
+        return rounded === 0 ? 0 : rounded;
+      }
+
+      function formatCount(num) {
+        if (num === null || num === undefined || !Number.isFinite(num)) return '0';
+        return String(normalizeCount(num)).replace('.', ',');
+      }
+
       function shortDisciplineName(name) {
         const clean = String(name || '').trim();
         const parts = clean.split(/\s+-\s+/);
@@ -844,8 +861,10 @@
             const notaNAF = parsePtNumber(d.naf_nota);
             const notaEfetiva = notaFinal ?? notaMD ?? notaN1;
             const freq = parsePtNumber(d.frequencia);
-            const faltas = parsePtNumber(d.total_faltas) ?? 0;
-            const aulas = parsePtNumber(d.total_aulas) ?? 0;
+            const faltasHoras = parsePtNumber(d.total_faltas) ?? 0;
+            const aulasHoras = parsePtNumber(d.total_aulas) ?? 0;
+            const faltas = normalizeCount(faltasHoras / HORAS_POR_AULA);
+            const aulas = normalizeCount(aulasHoras / HORAS_POR_AULA);
 
             return {
               ...d,
@@ -855,6 +874,8 @@
               notaNAF,
               notaEfetiva,
               freq,
+              faltasHoras,
+              aulasHoras,
               faltas,
               aulas,
             };
@@ -981,7 +1002,8 @@
         const media_notas = grades.length > 0 ? grades.reduce((a, b) => a + b, 0) / grades.length : null;
         const soma_notas = grades.length > 0 ? grades.reduce((a, b) => a + b, 0) : null;
         const freq_media = freqs.length > 0 ? freqs.reduce((a, b) => a + b, 0) / freqs.length : null;
-        const total_faltas = activeDiscs.reduce((acc, d) => acc + (d.faltas || 0), 0);
+        const total_faltas_horas = activeDiscs.reduce((acc, d) => acc + (d.faltasHoras || 0), 0);
+        const total_faltas = normalizeCount(total_faltas_horas / HORAS_POR_AULA);
         const aprovacoes = activeDiscs.filter((d) => (d.situacao || '').toLowerCase() === 'aprovado').length;
 
         return {
@@ -990,6 +1012,7 @@
           media_notas,
           soma_notas,
           freq_media,
+          total_faltas_horas,
           total_faltas,
           aprovacoes,
           qtd_notas: grades.length,
@@ -1015,7 +1038,7 @@
           return b.freq_media - a.freq_media;
         }
 
-        if (a.total_faltas !== b.total_faltas) {
+        if (Math.abs(a.total_faltas - b.total_faltas) > 1e-9) {
           return a.total_faltas - b.total_faltas;
         }
 
@@ -1079,9 +1102,11 @@
           el.kpiPresencaTotalSub.textContent = '--';
         }
 
-        const totalAbsences = computedStudents.reduce((acc, s) => acc + s.total_faltas, 0);
+        const totalAbsences = normalizeCount(
+          computedStudents.reduce((acc, s) => acc + (s.total_faltas_horas || 0), 0) / HORAS_POR_AULA
+        );
         const avgAbsences = total > 0 ? totalAbsences / total : 0;
-        el.kpiTotalFaltas.textContent = String(totalAbsences);
+        el.kpiTotalFaltas.textContent = formatCount(totalAbsences);
         el.kpiTotalFaltasSub.textContent = `Média de ${avgAbsences.toFixed(1).replace('.', ',')} faltas/aluno`;
       }
 
@@ -1156,7 +1181,7 @@
                   <div>
                     <p class="text-[11px] text-slate-400">Faltas</p>
                     <p class="mt-0.5 text-base font-bold tabular-nums text-slate-200">
-                      ${st.total_faltas}
+                      ${formatCount(st.total_faltas)}
                     </p>
                   </div>
                 </div>
@@ -1238,7 +1263,9 @@
           const semFaltasCount = withFreq.filter((s) => s.freq_media >= 99.99 && s.total_faltas === 0).length;
           const pctSemFaltas = totalAlunos > 0 ? (semFaltasCount / totalAlunos) * 100 : 0;
 
-          const totalFaltas = alunosMetrics.reduce((acc, s) => acc + s.total_faltas, 0);
+          const totalFaltas = normalizeCount(
+            alunosMetrics.reduce((acc, s) => acc + (s.total_faltas_horas || 0), 0) / HORAS_POR_AULA
+          );
           const mediaFaltasAluno = totalAlunos > 0 ? totalFaltas / totalAlunos : 0;
           const aprovacoesTotal = alunosMetrics.reduce((acc, s) => acc + s.aprovacoes, 0);
           const lider = alunosMetrics[0] || null;
@@ -1341,7 +1368,7 @@
                 <div class="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-slate-900/50 p-3 border border-slate-800/70 text-center">
                   <div>
                     <p class="text-[11px] text-slate-400">Total Faltas</p>
-                    <p class="mt-0.5 text-sm font-bold tabular-nums text-rose-300">${t.totalFaltas}</p>
+                    <p class="mt-0.5 text-sm font-bold tabular-nums text-rose-300">${formatCount(t.totalFaltas)}</p>
                   </div>
                   <div>
                     <p class="text-[11px] text-slate-400">Faltas/Aluno</p>
@@ -1487,7 +1514,7 @@
           const perDiscMeta = allDisciplines.map((discName) => {
             const grades = [];
             const freqs = [];
-            let faltasSum = 0;
+            let faltasHorasSum = 0;
             let countDisc = 0;
 
             alunosTurma.forEach((st) => {
@@ -1496,7 +1523,7 @@
               countDisc++;
               if (match.notaEfetiva !== null) grades.push(match.notaEfetiva);
               if (match.freq !== null) freqs.push(match.freq);
-              faltasSum += match.faltas || 0;
+              faltasHorasSum += match.faltasHoras || 0;
             });
 
             if (turmaDiscMode === 'nota') {
@@ -1507,6 +1534,7 @@
               const avg = freqs.length > 0 ? Number((freqs.reduce((a, b) => a + b, 0) / freqs.length).toFixed(1)) : null;
               return { value: avg, count: freqs.length };
             }
+            const faltasSum = normalizeCount(faltasHorasSum / HORAS_POR_AULA);
             return { value: faltasSum, avgAluno: countDisc > 0 ? faltasSum / countDisc : 0 };
           });
 
@@ -1546,7 +1574,7 @@
                         ? ` ${ds.label}: Sem dados`
                         : ` ${ds.label}: ${formatPercent(ctxItem.raw)}`;
                     }
-                    return ` ${ds.label}: ${ctxItem.raw} faltas (${metaItem.avgAluno.toFixed(1).replace('.', ',')}/aluno)`;
+                    return ` ${ds.label}: ${formatCount(ctxItem.raw)} faltas (${metaItem.avgAluno.toFixed(1).replace('.', ',')}/aluno)`;
                   },
                 },
               },
@@ -1631,7 +1659,7 @@
                   label: (context) => {
                     const st = subset[context.dataIndex];
                     const notaTxt = st.media_notas !== null ? formatGrade(st.media_notas) : '--';
-                    return ` Média: ${notaTxt} | Freq.: ${formatPercent(st.freq_media)} | Faltas: ${st.total_faltas}`;
+                    return ` Média: ${notaTxt} | Freq.: ${formatPercent(st.freq_media)} | Faltas: ${formatCount(st.total_faltas)}`;
                   },
                 },
               },
@@ -1856,7 +1884,7 @@
                   callbacks: {
                     label: (ctxItem) => {
                       const st = ctxItem.raw.student;
-                      return `${st.displayName}: Nota ${formatGrade(st.media_notas)} | Freq. ${formatPercent(st.freq_media)} | ${st.total_faltas} faltas`;
+                      return `${st.displayName}: Nota ${formatGrade(st.media_notas)} | Freq. ${formatPercent(st.freq_media)} | ${formatCount(st.total_faltas)} faltas`;
                     },
                   },
                 },
@@ -1913,7 +1941,7 @@
                   callbacks: {
                     label: (ctxItem) => {
                       const st = byAbsences[ctxItem.dataIndex];
-                      return ` ${st.total_faltas} faltas | Freq.: ${formatPercent(st.freq_media)}`;
+                      return ` ${formatCount(st.total_faltas)} faltas | Freq.: ${formatPercent(st.freq_media)}`;
                     },
                   },
                 },
@@ -2083,7 +2111,7 @@
                   ${formatPercent(st.freq_media)}
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-right tabular-nums text-slate-300">
-                  ${st.total_faltas}
+                  ${formatCount(st.total_faltas)}
                 </td>
                 <td class="px-4 py-3 whitespace-nowrap text-center tabular-nums">
                   <span class="inline-flex items-center rounded-full bg-slate-800 px-2.5 py-0.5 text-xs font-semibold text-slate-200 border border-slate-700">
@@ -2113,7 +2141,7 @@
       function openStudentModal(st) {
         el.modalRankBadge.textContent = `#${st.rank}`;
         el.modalStudentName.textContent = st.displayName;
-        el.modalStudentMeta.textContent = `Matrícula: ${st.matricula || '--'} • Turma: ${st.turma} • Média: ${formatGrade(st.media_notas)} • Frequência Média: ${formatPercent(st.freq_media)} • Faltas: ${st.total_faltas}`;
+        el.modalStudentMeta.textContent = `Matrícula: ${st.matricula || '--'} • Turma: ${st.turma} • Média: ${formatGrade(st.media_notas)} • Frequência Média: ${formatPercent(st.freq_media)} • Faltas: ${formatCount(st.total_faltas)}`;
 
         el.modalTableBody.innerHTML = st.disciplinas
           .map((d) => {
@@ -2132,8 +2160,8 @@
                 <td class="px-3 py-2.5 font-mono text-xs text-slate-400">${escapeHtml(d.diario || '-')}</td>
                 <td class="px-3 py-2.5 font-medium text-white">${escapeHtml(d.disciplina || '-')}</td>
                 <td class="px-3 py-2.5 text-center text-slate-300">${escapeHtml(d.carga_horaria || '-')}</td>
-                <td class="px-3 py-2.5 text-center tabular-nums text-slate-300">${escapeHtml(d.total_aulas || '0')}</td>
-                <td class="px-3 py-2.5 text-center tabular-nums text-slate-300">${escapeHtml(d.total_faltas || '0')}</td>
+                <td class="px-3 py-2.5 text-center tabular-nums text-slate-300" title="${escapeHtml(d.total_aulas || '0')}h">${formatCount(d.aulas)}</td>
+                <td class="px-3 py-2.5 text-center tabular-nums text-slate-300" title="${escapeHtml(d.total_faltas || '0')}h">${formatCount(d.faltas)}</td>
                 <td class="px-3 py-2.5 text-center tabular-nums font-semibold text-emerald-300">${escapeHtml(d.frequencia || '-')}</td>
                 <td class="px-3 py-2.5 text-center">
                   <span class="inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${sitClass}">
