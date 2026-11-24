@@ -46,7 +46,9 @@ jobs:
           SUAP_USUARIO: ${{ secrets.SUAP_USUARIO }}
           SUAP_SENHA: ${{ secrets.SUAP_SENHA }}
           SUAP_CHAVE_CRIPTO: ${{ secrets.SUAP_CHAVE_CRIPTO }}
-        run: python suap_minhas_notas.py
+        run: |
+          rm -f notas/*.csv
+          python suap_minhas_notas.py
 
       - name: Gerar dashboard criptografado
         env:
@@ -58,7 +60,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add notas index.html
+          git add -A -- notas index.html
           if git diff --cached --quiet; then
             echo "Nenhuma alteração para commitar."
             exit 0
