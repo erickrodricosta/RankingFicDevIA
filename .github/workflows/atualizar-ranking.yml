@@ -9,8 +9,8 @@ on:
         type: boolean
         default: false
   # Descomente abaixo para rodar automaticamente em horários agendados (horário em UTC):
-  # schedule:
-  #   - cron: "0 22 * * 1-5" # Seg-Sex às 18h (UTC-4) / 19h (Brasília)
+  schedule:
+      - cron: "0 22 * * 1-5" # Seg-Sex às 18h (UTC-4) / 19h (Brasília)
 
 permissions:
   contents: write
