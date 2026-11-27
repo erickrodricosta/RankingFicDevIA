@@ -214,10 +214,12 @@
       <p class="mt-2 text-sm text-slate-400">
         Digite a senha do ranking para desbloquear e visualizar os dados localmente no navegador.
       </p>
-      <form id="unlockForm" class="mt-6 space-y-4 text-left">
+      <form id="unlockForm" method="post" action="#visao-geral" autocomplete="on" class="mt-6 space-y-4 text-left">
+        <input id="unlockUsernameInput" type="text" name="username" value="Ranking FIC Dev IA" autocomplete="username"
+          tabindex="-1" aria-hidden="true" class="sr-only" />
         <div>
           <label for="unlockPasswordInput" class="sr-only">Senha de acesso</label>
-          <input id="unlockPasswordInput" type="password" autocomplete="current-password"
+          <input id="unlockPasswordInput" name="password" type="password" autocomplete="current-password"
             placeholder="Digite a senha de acesso..." required
             class="w-full rounded-xl bg-slate-900/90 border border-slate-700/80 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/25 transition" />
         </div>
@@ -663,6 +665,7 @@
         disciplineFilter: document.getElementById('disciplineFilter'),
         unlockState: document.getElementById('unlockState'),
         unlockForm: document.getElementById('unlockForm'),
+        unlockUsernameInput: document.getElementById('unlockUsernameInput'),
         unlockPasswordInput: document.getElementById('unlockPasswordInput'),
         unlockError: document.getElementById('unlockError'),
         btnUnlockSubmit: document.getElementById('btnUnlockSubmit'),
@@ -2597,7 +2600,66 @@
         throw new Error('Formato de dados descriptografados inválido.');
       }
 
-      function showUnlockScreen() {
+      const CREDENTIAL_USERNAME = 'Ranking FIC Dev IA';
+      let isUnlocking = false;
+
+      function canUsePasswordCredentialApi() {
+        return Boolean(
+          window.isSecureContext &&
+          typeof navigator !== 'undefined' &&
+          navigator.credentials &&
+          typeof window.PasswordCredential === 'function'
+        );
+      }
+
+      async function storeCredentialInBrowser(senha) {
+        if (!canUsePasswordCredentialApi() || typeof navigator.credentials.store !== 'function' || !senha) {
+          return false;
+        }
+        try {
+          const username = (el.unlockUsernameInput?.value || '').trim() || CREDENTIAL_USERNAME;
+          const credential = new window.PasswordCredential({
+            id: username,
+            name: CREDENTIAL_USERNAME,
+            password: senha,
+          });
+          await navigator.credentials.store(credential);
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      async function preventSilentCredentialAccess() {
+        if (typeof navigator !== 'undefined' && navigator.credentials && typeof navigator.credentials.preventSilentAccess === 'function') {
+          try {
+            await navigator.credentials.preventSilentAccess();
+          } catch (_) {
+            // Ignora falhas se o navegador não suportar ou bloquear a API
+          }
+        }
+      }
+
+      function updateHistoryState(unlocked) {
+        if (!window.history || !window.location) return;
+        const protocol = window.location.protocol;
+        if (protocol !== 'http:' && protocol !== 'https:') return;
+        try {
+          const baseUrl = `${window.location.pathname}${window.location.search}`;
+          if (unlocked) {
+            if (window.location.hash !== '#visao-geral') {
+              window.history.pushState({ dashboardUnlocked: true }, '', `${baseUrl}#visao-geral`);
+            }
+          } else if (window.location.hash === '#visao-geral') {
+            window.history.replaceState(null, '', baseUrl);
+          }
+        } catch (_) {
+          // Ignora erros de history API em ambientes restritos
+        }
+      }
+
+      function showUnlockScreen(options = {}) {
+        const { clearPassword = false, focusInput = true } = options;
         isDashboardLocked = true;
         dragDepth = 0;
         el.dropOverlay?.classList.add('hidden');
@@ -2611,17 +2673,29 @@
         el.statusDot.className = 'h-2 w-2 rounded-full bg-amber-400';
         el.statusText.textContent = 'Bloqueado (Criptografado)';
         el.unlockError?.classList.add('hidden');
+        if (el.unlockUsernameInput && !el.unlockUsernameInput.value) {
+          el.unlockUsernameInput.value = CREDENTIAL_USERNAME;
+        }
         if (el.unlockPasswordInput) {
-          el.unlockPasswordInput.value = '';
-          el.unlockPasswordInput.focus();
+          if (clearPassword) {
+            el.unlockPasswordInput.value = '';
+          }
+          if (focusInput) {
+            el.unlockPasswordInput.focus();
+          }
         }
       }
 
-      async function tryUnlockWithPassword(senha) {
-        if (!senha) return false;
+      async function tryUnlockWithPassword(senha, options = {}) {
+        const { fromCredentialManager = false } = options;
+        if (!senha || isUnlocking) return false;
+        isUnlocking = true;
+
         if (el.btnUnlockSubmit) {
           el.btnUnlockSubmit.disabled = true;
-          el.btnUnlockSubmit.textContent = 'Desbloqueando...';
+          el.btnUnlockSubmit.textContent = fromCredentialManager
+            ? 'Desbloqueando automaticamente...'
+            : 'Desbloqueando...';
         }
         el.unlockError?.classList.add('hidden');
 
@@ -2631,23 +2705,35 @@
           const parsedStudents = await descriptografarPayload(window.EMBEDDED_DATA, senha);
 
           isDashboardLocked = false;
-          if (el.unlockPasswordInput) {
-            el.unlockPasswordInput.value = '';
-          }
           el.unlockState?.classList.add('hidden');
           el.btnLockDashboard?.classList.remove('hidden');
           if (el.turmaFilter) el.turmaFilter.disabled = false;
           if (el.disciplineFilter) el.disciplineFilter.disabled = false;
           loadStudentsData(parsedStudents, 'criptografado');
+          updateHistoryState(true);
+          if (!fromCredentialManager) {
+            await storeCredentialInBrowser(senha);
+          }
           return true;
         } catch (err) {
-          if (el.unlockError) {
-            el.unlockError.textContent = 'Senha incorreta. Tente novamente.';
-            el.unlockError.classList.remove('hidden');
+          if (fromCredentialManager) {
+            await preventSilentCredentialAccess();
+            if (el.unlockError) {
+              el.unlockError.textContent = 'A senha salva no navegador não é mais válida. Digite a nova senha para atualizar.';
+              el.unlockError.classList.remove('hidden');
+            }
+            el.unlockPasswordInput?.focus();
+          } else {
+            if (el.unlockError) {
+              el.unlockError.textContent = 'Senha incorreta. Tente novamente.';
+              el.unlockError.classList.remove('hidden');
+            }
+            el.unlockPasswordInput?.focus();
             el.unlockPasswordInput?.select();
           }
           return false;
         } finally {
+          isUnlocking = false;
           if (el.btnUnlockSubmit) {
             el.btnUnlockSubmit.disabled = false;
             el.btnUnlockSubmit.textContent = 'Desbloquear Dashboard';
@@ -2655,13 +2741,38 @@
         }
       }
 
+      async function tryAutoUnlockFromCredentialManager() {
+        if (!canUsePasswordCredentialApi() || typeof navigator.credentials.get !== 'function') {
+          return false;
+        }
+        try {
+          const credential = await navigator.credentials.get({
+            password: true,
+            mediation: 'optional',
+          });
+          if (!isDashboardLocked || isUnlocking) return false;
+          if (credential && credential.type === 'password' && credential.password) {
+            if (el.unlockUsernameInput && credential.id) {
+              el.unlockUsernameInput.value = credential.id;
+            }
+            return await tryUnlockWithPassword(credential.password, { fromCredentialManager: true });
+          }
+        } catch (_) {
+          return false;
+        }
+        return false;
+      }
+
       el.unlockForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const senha = el.unlockPasswordInput ? el.unlockPasswordInput.value : '';
-        await tryUnlockWithPassword(senha);
+        await tryUnlockWithPassword(senha, { fromCredentialManager: false });
       });
 
       el.btnLockDashboard?.addEventListener('click', () => {
+        preventSilentCredentialAccess();
+        closeStudentModal();
+        updateHistoryState(false);
         rawStudents = [];
         computedStudents = [];
         if (el.podiumGrid) el.podiumGrid.innerHTML = '';
@@ -2674,12 +2785,13 @@
             charts[key] = null;
           }
         });
-        showUnlockScreen();
+        showUnlockScreen({ clearPassword: true, focusInput: true });
       });
 
       // Initialize from embedded data if present
       if (typeof window.EMBEDDED_DATA === 'string' && window.EMBEDDED_DATA.startsWith('ENC1:')) {
-        showUnlockScreen();
+        showUnlockScreen({ clearPassword: false, focusInput: true });
+        tryAutoUnlockFromCredentialManager();
       } else if (Array.isArray(window.EMBEDDED_DATA) && window.EMBEDDED_DATA.length > 0) {
         loadStudentsData(window.EMBEDDED_DATA, 'pasta notas/');
       } else {
